@@ -455,9 +455,9 @@ input[type=range].score-range::-webkit-slider-thumb{
   <!-- Score slider -->
   <div class="score-wrap">
     <span class="score-lbl">Score mínimo</span>
-    <input type="range" class="score-range" id="scoreSlider" min="50" max="90" value="65" step="5"
+    <input type="range" class="score-range" id="scoreSlider" min="50" max="90" value="78" step="5"
       oninput="updateScore(this.value)">
-    <span class="score-val" id="scoreVal">65%</span>
+    <span class="score-val" id="scoreVal">78%</span>
   </div>
 
   <!-- Botões -->
@@ -652,8 +652,11 @@ input[type=range].score-range::-webkit-slider-thumb{
     <div class="stat-card"><div class="stat-val" id="stWins" style="color:var(--green)">0</div><div class="stat-lbl">Acertos</div></div>
     <div class="stat-card"><div class="stat-val" id="stLosses" style="color:var(--red)">0</div><div class="stat-lbl">Erros</div></div>
     <div class="stat-card"><div class="stat-val" id="stWR" style="color:var(--yellow)">—</div><div class="stat-lbl">Taxa Acerto</div></div>
-    <div class="stat-card"><div class="stat-val" id="stPnl" style="color:var(--green)">$0</div><div class="stat-lbl">P&L Simulado</div></div>
+    <div class="stat-card"><div class="stat-val" id="stPnl" style="color:var(--green)">R$0</div><div class="stat-lbl">Lucro/Prejuízo</div></div>
+    <div class="stat-card" style="grid-column:span 2"><div class="stat-val" id="stBanca" style="color:var(--green)">R$1000.00</div><div class="stat-lbl">Banca Atual</div></div>
+    <div class="stat-card" style="grid-column:span 2"><div class="stat-val" id="stAposta" style="color:var(--yellow)">R$20.00</div><div class="stat-lbl">Próxima Aposta (2%)</div></div>
   </div>
+  <button onclick="resetBanca()" style="width:100%;padding:10px;background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:.72rem;cursor:pointer;font-family:'Syne',sans-serif;margin-top:8px;">🔄 Resetar Banca para R$1000</button>
   <div class="perf-chart"><canvas id="perfCanvas"></canvas></div>
   <div class="sec-title">REGISTAR RESULTADO</div>
   <div class="reg-form">
@@ -707,17 +710,17 @@ const TD_KEY='f77bb7aa1c394e95aedb5ea85c84c224';
 const FOREX=[
   {sym:'EUR/USD',base:'EUR',label:'Euro/Dólar',   cor:'#0c2a1a',txt:'#00e676'},
   {sym:'GBP/USD',base:'GBP',label:'Libra/Dólar', cor:'#0c1a2a',txt:'#2979ff'},
-  {sym:'USD/JPY',base:'USD',label:'Dólar/Iene',  cor:'#1a0c2a',txt:'#d500f9'},
-  {sym:'EUR/JPY',base:'EUR',label:'Euro/Iene',   cor:'#0c2a1a',txt:'#00e676'},
-  {sym:'GBP/JPY',base:'GBP',label:'Libra/Iene', cor:'#0c1a2a',txt:'#2979ff'},
   {sym:'AUD/USD',base:'AUD',label:'AUD/Dólar',   cor:'#2a1a0c',txt:'#ffd600'},
   {sym:'USD/CAD',base:'USD',label:'Dólar/CAD',   cor:'#2a0c0c',txt:'#ff6d00'},
   {sym:'USD/CHF',base:'USD',label:'Dólar/Franco',cor:'#0c2a2a',txt:'#00e5ff'},
   {sym:'NZD/USD',base:'NZD',label:'NZD/Dólar',   cor:'#0c2a14',txt:'#69f0ae'},
   {sym:'EUR/GBP',base:'EUR',label:'Euro/Libra',  cor:'#1a1a0c',txt:'#ccff90'},
-  {sym:'AUD/JPY',base:'AUD',label:'AUD/Iene',    cor:'#2a1a0c',txt:'#ffd600'},
-  {sym:'CAD/JPY',base:'CAD',label:'CAD/Iene',    cor:'#2a0c0c',txt:'#ff6d00'},
+  {sym:'EUR/CHF',base:'EUR',label:'Euro/Franco',  cor:'#0c1a2a',txt:'#40c4ff'},
+  {sym:'AUD/CAD',base:'AUD',label:'AUD/CAD',     cor:'#2a1a0c',txt:'#ffd600'},
+  {sym:'GBP/CHF',base:'GBP',label:'Libra/Franco',cor:'#1a0c2a',txt:'#ea80fc'},
 ];
+// Removidos: USD/JPY, GBP/JPY, EUR/JPY, AUD/JPY, CAD/JPY
+// Pares JPY muito voláteis e com baixa precisão nos testes
 
 // ── ESTADO GLOBAL ──
 let parAtual=FOREX[0];
@@ -730,8 +733,8 @@ let precoAtual=0;
 let varrendoAuto=false;
 let cooldowns={};
 let sinaisHora=[];
-const COOLDOWN_MS=15*60*1000;
-const MAX_HORA=4;
+const COOLDOWN_MS=5*60*1000;  // 5 min por par
+const MAX_HORA=20;             // 20 sinais/hora
 let tradeHistory=JSON.parse(localStorage.getItem('sp_th')||'[]');
 let notifPermitido=false;
 
@@ -749,7 +752,13 @@ function init(){
   renderPares();
   pedirNotif();
   atualizarContador();
-  setInterval(()=>carregarDados(true),30000);
+  // Limpar cache ao abrir — dados sempre frescos
+  Object.keys(apiCache).forEach(k=>delete apiCache[k]);
+  // Atualizar dados a cada 60 segundos SEM cache
+  setInterval(()=>{
+    Object.keys(apiCache).forEach(k=>delete apiCache[k]);
+    carregarDados(true);
+  },60000);
   setInterval(autoScan,3*60*1000);
   carregarDados();
   carregarNoticias();
@@ -811,6 +820,8 @@ function renderPares(){
 async function selPar(sym){
   const m=FOREX.find(x=>x.sym===sym);if(!m)return;
   parAtual=m;
+  // Limpar cache do par ao trocar — dados sempre frescos
+  Object.keys(apiCache).filter(k=>k.startsWith(sym)).forEach(k=>delete apiCache[k]);
   document.getElementById('parIco').textContent=m.base;
   document.getElementById('parIco').style.background=m.cor;
   document.getElementById('parIco').style.color=m.txt;
@@ -824,95 +835,106 @@ function setTF(btn,tf){
   tfAtual=tf;
   document.querySelectorAll('.tf-btn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
+  // Limpar cache ao trocar timeframe
+  Object.keys(apiCache).forEach(k=>delete apiCache[k]);
   carregarDados();
 }
 
 // ── API ──
 function tfStr(tf){return{'1m':'1min','5m':'5min','15m':'15min','1h':'1h','4h':'4h'}[tf]||'5min';}
 
-// ── CACHE E CONTADOR DE API ──
+// ══════════════════════════════════════════════════════
+// GESTÃO DE APIs — 6 sinais TD/dia + fontes alternativas
+// ══════════════════════════════════════════════════════
 const apiCache={};
-const CACHE_TTL=2*60*1000; // 2 minutos
-let apiCallsHoje=parseInt(localStorage.getItem('sp_api_calls')||'0');
-let apiCallsData=localStorage.getItem('sp_api_date')||'';
-const hoje=new Date().toDateString();
-if(apiCallsData!==hoje){apiCallsHoje=0;localStorage.setItem('sp_api_date',hoje);}
+const CACHE_TTL=3*60*1000; // 3 minutos de cache
+const MAX_TD_SINAIS=800; // máx chamadas TD para sinais por dia
 
-function contarChamada(){
-  apiCallsHoje++;
-  localStorage.setItem('sp_api_calls',apiCallsHoje);
+// Contadores diários
+const hoje=new Date().toDateString();
+let tdSinaisHoje=parseInt(localStorage.getItem('sp_td_sinais')||'0');
+let tdTotalHoje=parseInt(localStorage.getItem('sp_td_total')||'0');
+const dataGuardada=localStorage.getItem('sp_data')||'';
+if(dataGuardada!==hoje){
+  tdSinaisHoje=0;tdTotalHoje=0;
+  localStorage.setItem('sp_td_sinais','0');
+  localStorage.setItem('sp_td_total','0');
+  localStorage.setItem('sp_data',hoje);
+}
+
+function contarTD(tipo='total'){
+  if(tipo==='sinal'){tdSinaisHoje++;localStorage.setItem('sp_td_sinais',tdSinaisHoje);}
+  tdTotalHoje++;localStorage.setItem('sp_td_total',tdTotalHoje);
   atualizarContador();
 }
+
+function podeUsarTD(paraSinal=false){
+  if(paraSinal) return tdSinaisHoje<MAX_TD_SINAIS;
+  return tdTotalHoje<800;
+}
+
 function atualizarContador(){
   const el=document.getElementById('apiCounter');
   if(!el)return;
-  const restantes=800-apiCallsHoje;
-  el.textContent=`API: ${apiCallsHoje}/800 hoje`;
+  const restantes=800-tdTotalHoje;
+  el.textContent=`API: ${restantes} créditos`;
   el.style.color=restantes<100?'var(--red)':restantes<300?'var(--yellow)':'var(--muted)';
 }
 
-async function buscarDados(sym,tf){
-  // Verificar cache primeiro
+// ── FONTES ALTERNATIVAS ──
+
+
+
+
+
+
+async function buscarDados(sym,tf,paraSinal=false){
   const cacheKey=sym+'_'+tf;
   const cached=apiCache[cacheKey];
+
+  // Cache válido (3 min) — não chama API
   if(cached&&Date.now()-cached.ts<CACHE_TTL){
     return cached.data;
   }
 
-  // Tentar Twelve Data primeiro
-  if(apiCallsHoje<750){ // guardar margem de segurança
-    try{
-      const url=`https://api.twelvedata.com/time_series?symbol=${sym}&interval=${tfStr(tf)}&outputsize=100&apikey=${TD_KEY}&format=JSON`;
-      const r=await fetch(url,{signal:AbortSignal.timeout(12000)});
-      const d=await r.json();
-      if(d.status!=='error'&&d.values?.length){
-        contarChamada();
-        const candles=d.values.reverse().map(k=>({
-          open:parseFloat(k.open),high:parseFloat(k.high),
-          low:parseFloat(k.low),close:parseFloat(k.close),ts:k.datetime
-        }));
-        apiCache[cacheKey]={ts:Date.now(),data:candles};
-        return candles;
-      }
-    }catch(e){}
-  }
-
-  // Fallback: Alpha Vantage (gratuito, 25 calls/dia)
+  // 1. Twelve Data — dados Forex reais
   try{
-    const avSym=sym.replace('/','');
-    const from=avSym.slice(0,3),to=avSym.slice(3);
-    const avInterval={'1m':'1min','5m':'5min','15m':'15min','1h':'60min','4h':'60min'}[tf]||'5min';
-    const url=`https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol=${from}&to_symbol=${to}&interval=${avInterval}&outputsize=compact&apikey=demo`;
-    const r=await fetch(url,{signal:AbortSignal.timeout(12000)});
+    const url=`https://api.twelvedata.com/time_series?symbol=${sym}&interval=${tfStr(tf)}&outputsize=100&apikey=${TD_KEY}&format=JSON`;
+    const r=await fetch(url,{signal:AbortSignal.timeout(10000)});
     const d=await r.json();
-    const tsKey=Object.keys(d).find(k=>k.includes('Time Series'));
-    if(tsKey&&d[tsKey]){
-      const entries=Object.entries(d[tsKey]).slice(0,100).reverse();
-      const candles=entries.map(([ts,v])=>({
-        open:parseFloat(v['1. open']),high:parseFloat(v['2. high']),
-        low:parseFloat(v['3. low']),close:parseFloat(v['4. close']),ts
+    if(d.status!=='error'&&d.values?.length>=30){
+      contarTD(paraSinal?'sinal':'total');
+      const candles=d.values.reverse().map(k=>({
+        open:parseFloat(k.open),high:parseFloat(k.high),
+        low:parseFloat(k.low),close:parseFloat(k.close),ts:k.datetime
       }));
-      apiCache[cacheKey]={ts:Date.now(),data:candles};
+      apiCache[cacheKey]={ts:Date.now(),data:candles,fonte:'Twelve Data'};
       return candles;
     }
   }catch(e){}
 
-  // Fallback 2: Frankfurter (só para taxas atuais, gera dados sintéticos para análise)
+  // 2. Binance — funciona sempre, sem limite, sem necessidade de API key
+  // Converte par Forex para par Binance (ex: EUR/USD → EURUSDT)
   try{
-    const sym2=sym.replace('/','-');
-    const url=`https://api.frankfurter.app/latest?from=${sym.split('/')[0]}&to=${sym.split('/')[1]}`;
-    const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
+    const binSym=sym.replace('/','')+'T'; // EURUSDT
+    const binInterval={'1m':'1m','5m':'5m','15m':'15m','1h':'1h','4h':'4h'}[tf]||'5m';
+    const url=`https://api.binance.com/api/v3/klines?symbol=${binSym}&interval=${binInterval}&limit=100`;
+    const r=await fetch(url,{signal:AbortSignal.timeout(10000)});
     const d=await r.json();
-    if(d.rates){
-      const preco=Object.values(d.rates)[0];
-      // Usar cache anterior se existir (mesmo expirado)
-      if(cached)return cached.data;
+    if(Array.isArray(d)&&d.length>=30){
+      const candles=d.map(k=>({
+        open:parseFloat(k[1]),high:parseFloat(k[2]),
+        low:parseFloat(k[3]),close:parseFloat(k[4]),
+        ts:new Date(k[0]).toISOString()
+      }));
+      apiCache[cacheKey]={ts:Date.now(),data:candles,fonte:'Binance'};
+      return candles;
     }
   }catch(e){}
 
-  // Usar cache expirado como último recurso
+  // 3. Cache expirado como último recurso
   if(cached){
-    document.getElementById('apiBar').textContent='⚠️ Cache expirado — dados podem ter delay';
+    apiCache[cacheKey].ts=Date.now()-(CACHE_TTL/2); // renovar metade do TTL
     return cached.data;
   }
 
@@ -924,15 +946,17 @@ async function carregarDados(silent=false){
     document.getElementById('apiBar').className='api-bar load';
     document.getElementById('apiBar').textContent='⏳ Buscando dados...';
   }
-  const c=await buscarDados(parAtual.sym,tfAtual);
+  const c=await buscarDados(parAtual.sym,tfAtual,true); // paraSinal=true
   if(c&&c.length>=30){
     candleData=c;
     precoAtual=c[c.length-1].close;
     apiOk=true;
     const p=precoAtual,p0=c[0].close,ch=((p-p0)/p0*100);
     const chStr=(ch>=0?'+':'')+ch.toFixed(2)+'%';
+    const fonteNome=apiCache[parAtual.sym+'_'+tfAtual]?.fonte||'API';
+      const fonte=apiCache[parAtual.sym+'_'+tfAtual]?.fonte||'API';
     document.getElementById('apiBar').className='api-bar ok';
-    document.getElementById('apiBar').textContent=`✅ ${c.length} candles — Twelve Data`;
+    document.getElementById('apiBar').textContent=`✅ ${c.length} candles — ${fonte} | ${tdTotalHoje} chamadas TD hoje`;
     document.getElementById('parPreco').textContent=p.toFixed(parAtual.sym.includes('JPY')?3:5);
     document.getElementById('parPreco').className='par-preco '+(ch>=0?'up':'dn');
     document.getElementById('parChg').textContent=chStr;
@@ -943,12 +967,7 @@ async function carregarDados(silent=false){
   }else{
     apiOk=false;
     document.getElementById('apiBar').className='api-bar erro';
-    const restantes=800-apiCallsHoje;
-    if(restantes<=0){
-      document.getElementById('apiBar').textContent='❌ Limite diário da API atingido (800/800) — reseta à meia-noite';
-    }else{
-      document.getElementById('apiBar').textContent=`❌ Erro na API — ${restantes} créditos restantes hoje`;
-    }
+    document.getElementById('apiBar').textContent='❌ Sem conexão à internet — verifica o Wi-Fi';
   }
 }
 
@@ -1059,10 +1078,18 @@ function atualizarIndicadores(){
 // ════════════════════════════════════════════════════════
 function horarioBom(){
   const h=new Date().getUTCHours();
-  const lon=h>=8&&h<17,ny=h>=13&&h<21,sob=h>=13&&h<17;
+  // Horário de Brasília = UTC-3
+  // Sessão Londres: 08-17 UTC | NY: 13-21 UTC
+  // Sobreposição: 13-17 UTC (melhor)
+  // Noturno Brasil (21h-23h UTC = 18h-20h Brasília): penaliza mais
+  const lon=h>=8&&h<17;
+  const ny=h>=13&&h<21;
+  const sob=h>=13&&h<17;
+  const noturno=h>=21||h<6; // mercado fraco
   if(sob)return{ok:true,bonus:15,label:'⭐ Sobreposição Londres+NY'};
   if(lon)return{ok:true,bonus:8,label:'🇬🇧 Sessão Londres'};
   if(ny)return{ok:true,bonus:8,label:'🇺🇸 Sessão Nova York'};
+  if(noturno)return{ok:false,bonus:-20,label:'🌙 Mercado noturno — muito fraco'};
   return{ok:false,bonus:-8,label:'⚠️ Fora do horário ideal'};
 }
 
@@ -1077,10 +1104,11 @@ function calcSinal(data){
   if(!data||data.length<30)return null;
   const ind=calcInd(data);if(!ind)return null;
   const n=data.length;
-  // Usar velas fechadas (n-2 é a última fechada, n-1 pode estar em formação)
-  const c=data[n-2]||data[n-1];
+  const c=data[n-2]||data[n-1];   // última vela fechada
   const c1=data[n-3]||data[n-2];
   const c2=data[n-4]||data[n-3];
+  const c3=data[n-5]||data[n-4];
+  const c4=data[n-6]||data[n-5];
 
   if(pertoDeNoticia())return{tipo:null,bloqueado:true,motivo:'🚫 Notícia de alto impacto — aguardando 30min'};
 
@@ -1088,88 +1116,114 @@ function calcSinal(data){
   const baixa=v=>v.close<v.open;
   const corpo=v=>Math.abs(v.close-v.open);
   const range=v=>(v.high-v.low)||0.0001;
-  const forte=v=>corpo(v)/range(v)>0.4;
+  const forte=v=>corpo(v)/range(v)>0.35;
   const sombInf=v=>Math.min(v.open,v.close)-v.low;
   const sombSup=v=>v.high-Math.max(v.open,v.close);
 
   let setup=null,score=0;
   const razoes=[];
 
-  // ── ESTRATÉGIA 1: TENDÊNCIA ALTA ──
-  if(ind.regime==='TENDENCIA_ALTA'){
-    const pertoEMA=Math.abs(c.low-ind.ema9)/ind.ema9<0.002||Math.abs(c.low-ind.ema21)/ind.ema21<0.003;
-    if(!setup&&alta(c)&&forte(c)&&pertoEMA&&ind.rsi>35&&ind.rsi<65){
-      setup='buy';score=56;razoes.push('📈 Pullback para EMA em tendência alta');
+  // ── CONTAGEM DE SEQUÊNCIA DE VELAS ──
+  // Contar quantas velas consecutivas na mesma direção
+  let seqAlta=0,seqBaixa=0;
+  const ultimas=[c4,c3,c2,c1,c].filter(Boolean);
+  for(let i=ultimas.length-1;i>=0;i--){
+    if(alta(ultimas[i])){if(seqBaixa>0)break;seqAlta++;}
+    else{if(seqAlta>0)break;seqBaixa++;}
+  }
+
+  // ════════════════════════════════════════════════
+  // ESTRATÉGIA 1: SEGUIR TENDÊNCIA FORTE
+  // 3+ velas na mesma direção = continuar na mesma
+  // ════════════════════════════════════════════════
+  if(seqAlta>=3&&alta(c)&&ind.mom5>0){
+    setup='buy';score=65;
+    razoes.push(`📈 ${seqAlta} velas de alta consecutivas`);
+  }
+  if(!setup&&seqBaixa>=3&&baixa(c)&&ind.mom5<0){
+    setup='sell';score=65;
+    razoes.push(`📉 ${seqBaixa} velas de baixa consecutivas`);
+  }
+
+  // ════════════════════════════════════════════════
+  // ESTRATÉGIA 2: TENDÊNCIA + INDICADORES ALINHADOS
+  // ════════════════════════════════════════════════
+  if(!setup&&ind.regime==='TENDENCIA_ALTA'){
+    // Engolfo de alta
+    if(baixa(c1)&&alta(c)&&c.close>c1.open&&c.open<c1.close&&forte(c)){
+      setup='buy';score=68;razoes.push('🕯 Engolfo de alta em tendência');
     }
-    if(!setup&&baixa(c1)&&alta(c)&&c.close>c1.open&&c.open<c1.close&&forte(c)){
-      setup='buy';score=60;razoes.push('🕯 Engolfo de alta — continuação');
+    // Pullback e retomada
+    if(!setup&&alta(c)&&forte(c)&&ind.rsi>40&&ind.rsi<65&&ind.ema9>ind.ema21){
+      setup='buy';score=60;razoes.push('📈 Retomada da tendência de alta');
     }
-    if(!setup&&sombInf(c)>corpo(c)*2&&sombSup(c)<corpo(c)*0.5&&(baixa(c1)||baixa(c2))){
-      setup='buy';score=54;razoes.push('🔨 Martelo — fundo de pullback');
-    }
-    if(!setup&&ind.macdHist>0&&ind.macd>ind.macdSig&&alta(c)&&ind.rsi<60){
-      setup='buy';score=52;razoes.push('📊 MACD virando positivo');
+    // Martelo
+    if(!setup&&sombInf(c)>corpo(c)*1.8&&(baixa(c1)||baixa(c2))){
+      setup='buy';score=58;razoes.push('🔨 Martelo — reversão para alta');
     }
   }
 
-  // ── ESTRATÉGIA 2: TENDÊNCIA BAIXA ──
-  if(ind.regime==='TENDENCIA_BAIXA'){
-    const pertoEMAb=Math.abs(c.high-ind.ema9)/ind.ema9<0.002||Math.abs(c.high-ind.ema21)/ind.ema21<0.003;
-    if(!setup&&baixa(c)&&forte(c)&&pertoEMAb&&ind.rsi>35&&ind.rsi<65){
-      setup='sell';score=56;razoes.push('📉 Pullback para EMA em tendência baixa');
+  if(!setup&&ind.regime==='TENDENCIA_BAIXA'){
+    // Engolfo de baixa
+    if(alta(c1)&&baixa(c)&&c.close<c1.open&&c.open>c1.close&&forte(c)){
+      setup='sell';score=68;razoes.push('🕯 Engolfo de baixa em tendência');
     }
-    if(!setup&&alta(c1)&&baixa(c)&&c.close<c1.open&&c.open>c1.close&&forte(c)){
-      setup='sell';score=60;razoes.push('🕯 Engolfo de baixa — continuação');
+    // Pullback e retomada
+    if(!setup&&baixa(c)&&forte(c)&&ind.rsi>35&&ind.rsi<60&&ind.ema9<ind.ema21){
+      setup='sell';score=60;razoes.push('📉 Retomada da tendência de baixa');
     }
-    if(!setup&&sombSup(c)>corpo(c)*2&&sombInf(c)<corpo(c)*0.5&&(alta(c1)||alta(c2))){
-      setup='sell';score=54;razoes.push('⭐ Estrela cadente — topo de pullback');
-    }
-    if(!setup&&ind.macdHist<0&&ind.macd<ind.macdSig&&baixa(c)&&ind.rsi>40){
-      setup='sell';score=52;razoes.push('📊 MACD virando negativo');
+    // Estrela cadente
+    if(!setup&&sombSup(c)>corpo(c)*1.8&&(alta(c1)||alta(c2))){
+      setup='sell';score=58;razoes.push('⭐ Estrela cadente — reversão para baixa');
     }
   }
 
-  // ── ESTRATÉGIA 3: MERCADO LATERAL ──
-  if(ind.regime==='LATERAL'){
-    const distS=(c.close-ind.suport)/(ind.resist-ind.suport||1);
-    const distR=(ind.resist-c.close)/(ind.resist-ind.suport||1);
-    if(!setup&&distS<0.2&&ind.rsi<35&&ind.stoch<25&&(alta(c)||sombInf(c)>corpo(c)*1.5)){
-      setup='buy';score=62;razoes.push('🔄 Rebote no suporte — RSI extremo');
-    }
-    if(!setup&&ind.bbPct<15&&ind.rsi<30&&alta(c)){
-      setup='buy';score=64;razoes.push('📊 Banda inferior BB + RSI sobrevendido');
-    }
-    if(!setup&&distR<0.2&&ind.rsi>65&&ind.stoch>75&&(baixa(c)||sombSup(c)>corpo(c)*1.5)){
-      setup='sell';score=62;razoes.push('🔄 Rejeição na resistência — RSI extremo');
-    }
-    if(!setup&&ind.bbPct>85&&ind.rsi>70&&baixa(c)){
-      setup='sell';score=64;razoes.push('📊 Banda superior BB + RSI sobrecomprado');
-    }
+  // ════════════════════════════════════════════════
+  // ESTRATÉGIA 3: RSI EXTREMO + REVERSÃO
+  // Funciona bem em OTC
+  // ════════════════════════════════════════════════
+  if(!setup&&ind.rsi<25&&alta(c)&&(seqBaixa>=2||sombInf(c)>corpo(c)*1.5)){
+    setup='buy';score=70;razoes.push(`📊 RSI extremo sobrevendido (${ind.rsi}) — reversão`);
+  }
+  if(!setup&&ind.rsi>75&&baixa(c)&&(seqAlta>=2||sombSup(c)>corpo(c)*1.5)){
+    setup='sell';score=70;razoes.push(`📊 RSI extremo sobrecomprado (${ind.rsi}) — reversão`);
+  }
+
+  // ════════════════════════════════════════════════
+  // ESTRATÉGIA 4: BOLLINGER EXTREMO
+  // Banda inferior/superior + vela de reversão
+  // ════════════════════════════════════════════════
+  if(!setup&&ind.bbPct<10&&alta(c)){
+    setup='buy';score=68;razoes.push('📊 Banda inferior extrema — rebote');
+  }
+  if(!setup&&ind.bbPct>90&&baixa(c)){
+    setup='sell';score=68;razoes.push('📊 Banda superior extrema — rejeição');
   }
 
   if(!setup)return null;
 
-  // ── CONFIRMAÇÕES UNIVERSAIS ──
-  if(ind.volRel>1.3){score+=10;razoes.push('✅ Volume acima da média');}
-  else if(ind.volRel<0.7)score-=8;
-
+  // ── CONFIRMAÇÕES ──
   if(setup==='buy'){
-    if(ind.macd>ind.macdSig){score+=8;razoes.push('✅ MACD favorável');}
-    if(ind.stoch<40){score+=6;razoes.push('✅ Stochastic oversold');}
-    if(ind.ema9>ind.ema21){score+=5;}
-    if(ind.bbPct<45)score+=4;
-    if(ind.rsi>70)score-=20;
-    if(ind.macdHist<0&&ind.regime!=='LATERAL')score-=8;
+    if(ind.macd>ind.macdSig){score+=8;razoes.push('✅ MACD bullish');}
+    if(ind.stoch<35){score+=7;razoes.push('✅ Stochastic oversold');}
+    if(ind.ema9>ind.ema21)score+=5;
+    if(ind.volRel>1.2){score+=8;razoes.push('✅ Volume forte');}
+    // Penalizações
+    if(ind.rsi>72)score-=15;
+    if(ind.bbPct>80)score-=10;
+    if(seqBaixa>=4)score-=12; // muito momentum negativo
   }else{
-    if(ind.macd<ind.macdSig){score+=8;razoes.push('✅ MACD favorável');}
-    if(ind.stoch>60){score+=6;razoes.push('✅ Stochastic overbought');}
+    if(ind.macd<ind.macdSig){score+=8;razoes.push('✅ MACD bearish');}
+    if(ind.stoch>65){score+=7;razoes.push('✅ Stochastic overbought');}
     if(ind.ema9<ind.ema21)score+=5;
-    if(ind.bbPct>55)score+=4;
-    if(ind.rsi<30)score-=20;
-    if(ind.macdHist>0&&ind.regime!=='LATERAL')score-=8;
+    if(ind.volRel>1.2){score+=8;razoes.push('✅ Volume forte');}
+    // Penalizações
+    if(ind.rsi<28)score-=15;
+    if(ind.bbPct<20)score-=10;
+    if(seqAlta>=4)score-=12; // muito momentum positivo
   }
 
-  // Horário
+  // Horário — bónus mas não bloqueia
   const h=horarioBom();
   score+=h.bonus;
   if(h.bonus>0)razoes.push(`✅ ${h.label}`);
@@ -1178,7 +1232,8 @@ function calcSinal(data){
   if(score<minS)return null;
 
   const conf=Math.min(99,Math.max(minS,Math.round(score)));
-  const regLabel=ind.regime==='TENDENCIA_ALTA'?'Tendência Alta':ind.regime==='TENDENCIA_BAIXA'?'Tendência Baixa':'Lateral';
+  const regLabel=ind.regime==='TENDENCIA_ALTA'?'Tendência Alta':
+                 ind.regime==='TENDENCIA_BAIXA'?'Tendência Baixa':'Lateral';
   return{tipo:setup,conf,razoes:razoes.slice(0,6),ind,regime:regLabel};
 }
 
@@ -1274,10 +1329,13 @@ function regSinal(par){cooldowns[par]=Date.now();sinaisHora.push(Date.now());}
 
 // ── ANALISAR ──
 async function analisar(){
-  if(!apiOk){toast('⚠️ Aguardando API...','info');await carregarDados();return;}
   const btn=document.getElementById('btnAnalisar');
   btn.textContent='⏳ Analisando...';btn.disabled=true;
-  await carregarDados(true);
+  // Sempre busca dados frescos ao analisar — apaga cache do par atual
+  const ck=parAtual.sym+'_'+tfAtual;
+  delete apiCache[ck];
+  await carregarDados(false);
+  if(!apiOk){toast('⚠️ Sem dados — verifica a ligação','info');btn.textContent='⚡ Analisar';btn.disabled=false;return;}
   const res=calcSinal();
   btn.textContent='⚡ Analisar';btn.disabled=false;
   if(!res){toast('⏳ Sem setup claro agora','info');renderAguardando('Sem setup','Mercado sem padrão claro');return;}
@@ -1311,7 +1369,7 @@ async function autoScan(){
     if(sym===parAtual.sym)continue;
     if(!podeSinal(sym).ok)continue;
     try{
-      const c=await buscarDados(sym,tfAtual);
+      const c=await buscarDados(sym,tfAtual,false); // autoScan não conta como sinal TD
       if(!c||c.length<30)continue;
       const saved=candleData;candleData=c;
       const res=calcSinal();candleData=saved;
@@ -1340,7 +1398,6 @@ function toggleAuto(){
   btn.textContent=autoAtivo?'🤖 Auto: ON':'⏸ Auto: OFF';
   btn.className='btn-auto'+(autoAtivo?'':' off');
 }
-setInterval(autoScan,3*60*1000);
 
 // ── HISTÓRICO ──
 function renderHist(){
@@ -1522,14 +1579,39 @@ function desenharBtChart(trades){
 // ════════════════════════════════════════════════════════
 // STATS
 // ════════════════════════════════════════════════════════
+// ── GESTÃO DE BANCA ──
+function getBanca(){
+  return parseFloat(localStorage.getItem('sp_banca')||'1000');
+}
+function setBanca(val){
+  localStorage.setItem('sp_banca',val.toFixed(2));
+}
+function getApostaAtual(){
+  const banca=getBanca();
+  // 2% da banca por operação
+  const aposta=banca*0.02;
+  // Mínimo R$1, máximo R$200
+  return Math.min(200,Math.max(1,Math.round(aposta*100)/100));
+}
+
 function regTrade(res){
   const ul=sinais[0];
   if(!ul){toast('Sem sinal para registar','info');return;}
-  const pnl=res==='win'?ul.conf*0.0085*10:-10;
-  tradeHistory.unshift({par:ul.par,tipo:ul.tipo,conf:ul.conf,resultado:res,pnl,hora:ul.hora,ts:Date.now()});
+  const banca=getBanca();
+  const aposta=getApostaAtual();
+  const payout=0.85; // 85% de retorno no WIN
+  const pnl=res==='win'?aposta*payout:-aposta;
+  const novaBanca=banca+pnl;
+  setBanca(novaBanca);
+  tradeHistory.unshift({
+    par:ul.par,tipo:ul.tipo,conf:ul.conf,resultado:res,
+    pnl,aposta,banca:novaBanca,hora:ul.hora,ts:Date.now()
+  });
   localStorage.setItem('sp_th',JSON.stringify(tradeHistory));
   renderStats();
-  toast(res==='win'?'✅ WIN registado!':'❌ LOSS registado',res==='win'?'buy':'sell');
+  const emoji=res==='win'?'✅':'❌';
+  const sinal=res==='win'?'+':'−';
+  toast(`${emoji} ${res==='win'?'WIN':'LOSS'} | ${sinal}R$${Math.abs(pnl).toFixed(2)} | Banca: R$${novaBanca.toFixed(2)}`,res==='win'?'buy':'sell');
 }
 function renderStats(){
   const wins=tradeHistory.filter(t=>t.resultado==='win').length;
@@ -1537,12 +1619,24 @@ function renderStats(){
   const total=wins+losses;
   const wr=total?Math.round(wins/total*100):0;
   const pnl=tradeHistory.reduce((s,t)=>s+t.pnl,0);
+  const banca=getBanca();
+  const bancaInicial=1000;
+  const lucro=banca-bancaInicial;
   document.getElementById('stWins').textContent=wins;
   document.getElementById('stLosses').textContent=losses;
   document.getElementById('stWR').textContent=total?wr+'%':'—';
   document.getElementById('stWR').style.color=wr>=58?'var(--green)':wr>=50?'var(--yellow)':'var(--red)';
-  document.getElementById('stPnl').textContent=(pnl>=0?'+$':'−$')+Math.abs(pnl).toFixed(2);
-  document.getElementById('stPnl').style.color=pnl>=0?'var(--green)':'var(--red)';
+  document.getElementById('stPnl').textContent=(lucro>=0?'+R$':'−R$')+Math.abs(lucro).toFixed(2);
+  document.getElementById('stPnl').style.color=lucro>=0?'var(--green)':'var(--red)';
+  // Mostrar banca atual
+  const bancaEl=document.getElementById('stBanca');
+  if(bancaEl){
+    bancaEl.textContent='R$'+banca.toFixed(2);
+    bancaEl.style.color=banca>=bancaInicial?'var(--green)':'var(--red)';
+  }
+  // Mostrar próxima aposta
+  const apostaEl=document.getElementById('stAposta');
+  if(apostaEl)apostaEl.textContent='R$'+getApostaAtual().toFixed(2);
   desenharPerfChart();
   document.getElementById('tradeLog').innerHTML=tradeHistory.slice(0,30).map(t=>`
     <div class="trade-log-item">
@@ -1568,6 +1662,9 @@ function desenharPerfChart(){
 }
 function limparStats(){
   if(confirm('Apagar todo o histórico?')){tradeHistory=[];localStorage.setItem('sp_th','[]');renderStats();toast('🗑️ Histórico apagado','info');}
+}
+function resetBanca(){
+  if(confirm('Resetar banca para R$1000?')){setBanca(1000);renderStats();toast('🔄 Banca resetada para R$1000','info');}
 }
 
 // ════════════════════════════════════════════════════════
